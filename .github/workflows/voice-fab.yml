@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       name:
-        description: 'Имя голоса (латиницей, без пробелов): станет voices/<имя>.bin'
+        description: 'Имя голоса/эмоции (латиницей, без пробелов): voices/<имя>.bin — напр. petr, petr_sad'
         required: true
       ref_audio_url:
-        description: 'Прямая ссылка на референс-аудио голоса (3–30 с чистой речи, без музыки)'
+        description: 'Референс: 3–30 с чистой речи. Заготовка эмоции? Подай эмоциональный дубль и назови с суффиксом: petr_joy, petr_sad…'
         required: true
       ref_text:
         description: 'Точная расшифровка референса (не обязательно, но лучше с ней)'
