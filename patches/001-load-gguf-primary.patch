@@ -18,13 +18,15 @@ diff --git a/qwen_tts.h b/qwen_tts.h
 diff --git a/qwen_tts.c b/qwen_tts.c
 --- a/qwen_tts.c
 +++ b/qwen_tts.c
-@@ -717,4 +717,9 @@
+@@ -717,4 +717,11 @@
      ctx->silent = silent; ctx->debug = 0;
      ctx->use_int8 = use_int8; ctx->use_int4 = use_int4;
  
 +    {
 +        const char *pg = getenv("QWEN_PRIMARY_GGUF");
-+        if (pg && pg[0]) { ctx->primary_gguf = pg; ctx->use_int4 = 1; ctx->use_int8 = 0; }
++        if (pg && pg[0]) { ctx->primary_gguf = pg; ctx->use_int4 = 1; ctx->use_int8 = 0;
++            setenv("QWEN_PREFILL_MATMAT", "0", 0);   /* bf16-GEMM префиллу неоткуда взяться */
++            setenv("QWEN_PREFILL_QUANT", "1", 0); }  /* префилл — тоже по q4-буферам   */
 +    }
 +
      char config_path[1024];
