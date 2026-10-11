@@ -1,0 +1,26 @@
+name: Build APK (arm64-v8a)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch engine (pinned sha)
+        run: bash scripts/fetch_engine.sh
+      - name: Toolchain report
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"; java -version 2>&1 | head -2
+          gradle --version | head -8
+          ls "$ANDROID_HOME/ndk/" || true
+      - name: Assemble debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: yomikai-voice-arm64
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

@@ -1,0 +1,58 @@
+name: Export Q4 weights package -> Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  weights:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch engine (pinned sha)
+        run: bash scripts/fetch_engine.sh
+      - name: Deps (OpenBLAS)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev zip
+      - name: Build x86 engine
+        run: make -C engine blas 2>&1 | tail -5
+      - name: Download 0.6B model
+        run: cd engine && bash download_model.sh --model small --dir qwen3-tts-0.6b
+      - name: Export Q4-LSQ GGUF (Talker+CP)
+        run: |
+          mkdir -p pack
+          ./engine/qwen_tts -d engine/qwen3-tts-0.6b --export-q4lsq pack/talker_cp.q4.gguf 2>&1 | tail -15
+          ls -la pack/
+      - name: Assemble phone bundle
+        run: |
+          set -e
+          cd engine/qwen3-tts-0.6b
+          cp -r --parents speech_tokenizer ../../pack/
+          cp --parents config.json generation_config.json merges.txt preprocessor_config.json tokenizer_config.json vocab.json ../../pack/ 2>/dev/null || true
+          cd ../..
+          cp -r engine/presets/emovoice pack/emovoice
+          du -sh pack/*
+      - name: Zip bundle
+        run: cd pack && zip -1 -q -r ../voice_pack_q4_06b.zip . && cd .. && ls -la voice_pack_q4_06b.zip
+      - name: Upload artifact (страховка)
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-pack-q4-06b
+          path: voice_pack_q4_06b.zip
+          retention-days: 7
+      - name: Release upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: weights-q4-v1
+          name: Voice pack Q4 0.6B (RU-ready)
+          body: |
+            Пакет весов для Yomikai Voice (Android).
+            - talker_cp.q4.gguf — Talker+CodePredictor Q4_0-LSQ (~0.49 ГБ)
+            - speech_tokenizer/ — речевой декодер bf16 (~0.65 ГБ)
+            - tokenizer/config + emovoice-пресеты
+            Распаковать в filesDir/model.
+          files: voice_pack_q4_06b.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

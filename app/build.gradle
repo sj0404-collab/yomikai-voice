@@ -1,0 +1,17 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.yomikai.voice'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.yomikai.voice'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild { cmake { abiFilters 'arm64-v8a'; cppFlags '' } }
+    }
+    externalNativeBuild {
+        cmake { path file('jni/CMakeLists.txt'); version '3.22.1' }
+    }
+}
