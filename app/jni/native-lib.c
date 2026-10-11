@@ -57,14 +57,17 @@ Java_com_yomikai_voice_MainActivity_qLoad(JNIEnv *env, jobject thiz,
     const char *gr  = (*env)->GetStringUTFChars(env, ggufRest, 0);
     LOGI("qLoad dir=%s gguf=%s", dir, (gt && gt[0]) ? gt : "(none)");
 
+    int primary = (gt && gt[0]);
+    if (primary) setenv("QWEN_PRIMARY_GGUF", gt, 1);  /* патч 001: Talker+CP прямо из GGUF */
+
     qwen_tts_ctx_t *ctx = qwen_tts_load_ex(dir, 1 /*silent*/, 0 /*int8*/, 0 /*int4*/);
     if (!ctx) { LOGE("load_ex failed"); goto fail; }
-    if (gt && gt[0]) {
+    if (!primary && gt && gt[0]) {                    /* старый путь: gguf поверх bf16 (отладка) */
         int n = qwen_gguf_override_talker(ctx, gt, 1);
         LOGI("gguf talker tensors: %d", n);
         if (n <= 0) { LOGE("gguf talker override empty"); qwen_tts_unload(ctx); goto fail; }
     }
-    if (gr && gr[0] && (!gt || strcmp(gr, gt) != 0)) {
+    if (!primary && gr && gr[0] && (!gt || strcmp(gr, gt) != 0)) {
         int n = qwen_gguf_override_rest(ctx, gr, 1);
         LOGI("gguf rest tensors: %d", n);
         if (n <= 0) { LOGE("gguf rest override empty"); qwen_tts_unload(ctx); goto fail; }

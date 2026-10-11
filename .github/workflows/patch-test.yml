@@ -1,0 +1,62 @@
+name: Patch-test (GGUF-primary load)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  patchtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libopenblas-dev
+          pip3 install --quiet --break-system-packages safetensors numpy || pip3 install --quiet safetensors numpy
+      - name: Fetch + patch + build engine
+        run: |
+          bash scripts/fetch_engine.sh
+          grep -c primary_gguf engine/qwen_tts.c || { echo "патч не применился"; exit 1; }
+          make -C engine blas 2>&1 | tail -3
+      - name: Model cache (CustomVoice 0.6B)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: qtts-model
+          key: ttsmodel-cv-06b-v1
+      - name: Download model (cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cp engine/download_model.sh . && bash download_model.sh --model small --dir qtts-model
+      - name: Export Q4-LSQ GGUF
+        run: mkdir -p pack && ./engine/qwen_tts -d qtts-model --export-q4lsq pack/talker_cp.q4.gguf 2>&1 | tail -8 && ls -la pack/
+      - name: Strip rest-model dir
+        run: python3 tools/tts/strip_layers.py qtts-model rest && du -sh rest
+      - name: Control run (full model, --int4, fixed seed)
+        run: |
+          printf '%s' 'Контрольная фраза для проверки первичной загрузки из квантованного файла.' > probe.txt
+          ./engine/qwen_tts -d qtts-model --int4 -s serena -l Russian --seed 42 --text "$(cat probe.txt)" -o control.wav
+      - name: Primary run (rest dir + QWEN_PRIMARY_GGUF)
+        env:
+          QWEN_PRIMARY_GGUF: pack/talker_cp.q4.gguf
+        run: ./engine/qwen_tts -d rest -s serena -l Russian --seed 42 --text "$(cat probe.txt)" -o primary.wav
+      - name: Compare
+        run: |
+          python3 - <<'PY'
+          import wave
+          def dur(p):
+              w = wave.open(p, 'rb'); d = w.getnframes() / w.getframerate(); w.close(); return d
+          dc, dp = dur('control.wav'), dur('primary.wav')
+          print(f"control: {dc:.2f}s   primary: {dp:.2f}s")
+          ok = dp > 1.0 and abs(dc - dp) < 1.0
+          print("PASS" if ok else "FAIL")
+          import sys; sys.exit(0 if ok else 1)
+          PY
+      - name: Upload WAVs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patchtest-wavs
+          path: |
+            control.wav
+            primary.wav
+          retention-days: 14

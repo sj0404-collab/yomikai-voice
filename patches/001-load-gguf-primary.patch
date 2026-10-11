@@ -1,0 +1,103 @@
+diff --git a/qwen_tts.h b/qwen_tts.h
+--- a/qwen_tts.h
++++ b/qwen_tts.h
+@@ -355,8 +355,12 @@
+     int silent;
+     int debug;
+     int use_int8;
+     int use_int4;
+-
++
++    /* yomikai-voice (Android): если задан (env QWEN_PRIMARY_GGUF), веса blk.*
++     * Talker/CP грузятся напрямую из GGUF Q4_0, без bf16 safetensors. */
++    const char *primary_gguf;
++
+     float temperature;
+     int top_k;
+     float top_p;
+diff --git a/qwen_tts.c b/qwen_tts.c
+--- a/qwen_tts.c
++++ b/qwen_tts.c
+@@ -717,4 +717,9 @@
+     ctx->silent = silent; ctx->debug = 0;
+     ctx->use_int8 = use_int8; ctx->use_int4 = use_int4;
+ 
++    {
++        const char *pg = getenv("QWEN_PRIMARY_GGUF");
++        if (pg && pg[0]) { ctx->primary_gguf = pg; ctx->use_int4 = 1; ctx->use_int8 = 0; }
++    }
++
+     char config_path[1024];
+@@ -813,6 +813,19 @@
+         free(ctx); return NULL;
+     }
+ 
++    if (ctx->primary_gguf) {
++        extern int qwen_gguf_override_talker(qwen_tts_ctx_t *, const char *, int);
++        extern int qwen_gguf_override_rest(qwen_tts_ctx_t *, const char *, int);
++        if (!ctx->silent) fprintf(stderr, "  Primary GGUF: %s\n", ctx->primary_gguf);
++        if (qwen_gguf_override_talker(ctx, ctx->primary_gguf, ctx->silent) <= 0 ||
++            qwen_gguf_override_rest(ctx, ctx->primary_gguf, ctx->silent) <= 0) {
++            fprintf(stderr, "Error: primary GGUF load failed\n");
++            ingot_st_close(ctx->safetensors);
++            ingot_st_close(ctx->speech_safetensors);
++            free(ctx); return NULL;
++        }
++    }
++
+     if (ctx->is_base_model) {
+         if (ctx->speaker_enc_dim > 0)
+             ctx->speaker_enc.enc_dim = ctx->speaker_enc_dim;
+diff --git a/qwen_tts_talker.c b/qwen_tts_talker.c
+--- a/qwen_tts_talker.c
++++ b/qwen_tts_talker.c
+@@ -518,7 +518,7 @@
+         #define LOAD_BF16(field, fmt, ...) do { \
+             snprintf(name, sizeof(name), fmt, ##__VA_ARGS__); \
+             l->field = get_bf16(ctx->safetensors, name); \
+-            if (!l->field) { fprintf(stderr, "Error: cannot find %s\n", name); return -1; } \
++            if (!l->field && !ctx->primary_gguf) { fprintf(stderr, "Error: cannot find %s\n", name); return -1; } \
+         } while(0)
+ 
+         #define LOAD_F32(field, fmt, ...) do { \
+@@ -540,7 +540,7 @@
+         LOAD_BF16(up_bf16, "talker.model.layers.%d.mlp.up_proj.weight", i);
+         LOAD_BF16(down_bf16, "talker.model.layers.%d.mlp.down_proj.weight", i);
+ 
+-        {
++        if (l->gate_bf16 && l->up_bf16) {
+             size_t row_bytes = (size_t)h * sizeof(uint16_t);
+             l->gate_up_fused_bf16 = (uint16_t *)aligned_malloc(2 * (size_t)c->intermediate_size * row_bytes);
+             for (int r = 0; r < c->intermediate_size; r++) {
+@@ -552,8 +552,8 @@
+         #undef LOAD_F32
+     }
+ 
+-    int tk_do_int8 = ctx->use_int8;
+-    int tk_do_int4 = ctx->use_int4;
++    int tk_do_int8 = ctx->use_int8 && !ctx->primary_gguf;
++    int tk_do_int4 = ctx->use_int4 && !ctx->primary_gguf;
+     const char *tk_prec = getenv("QWEN_TALKER_PREC");
+     if (tk_prec && *tk_prec) {
+         tk_do_int8 = !strcmp(tk_prec, "int8");
+diff --git a/qwen_tts_code_predictor.c b/qwen_tts_code_predictor.c
+--- a/qwen_tts_code_predictor.c
++++ b/qwen_tts_code_predictor.c
+@@ -363,7 +363,7 @@
+         CP_LOAD_BF16(up_bf16, "talker.code_predictor.model.layers.%d.mlp.up_proj.weight", i);
+         CP_LOAD_BF16(down_bf16, "talker.code_predictor.model.layers.%d.mlp.down_proj.weight", i);
+ 
+-        {
++        if (l->gate_bf16 && l->up_bf16) {
+             size_t row_bytes = (size_t)cp_h * sizeof(uint16_t);
+             l->gate_up_fused_bf16 = (uint16_t *)aligned_malloc(2 * (size_t)c->cp_intermediate_size * row_bytes);
+             for (int r = 0; r < c->cp_intermediate_size; r++) {
+@@ -434,6 +434,8 @@
+ 
+     int cp_do_int8 = ctx->use_int8;
+     int cp_do_int4 = ctx->use_int4;
++
++    if (ctx->primary_gguf) { cp_do_int8 = 0; cp_do_int4 = 0; }
+     const char *cp_prec = getenv("QWEN_CP_PREC");
+     if (cp_prec && *cp_prec) {
+         cp_do_int8 = !strcmp(cp_prec, "int8");
