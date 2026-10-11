@@ -21,6 +21,8 @@ on:
 jobs:
   fab:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
