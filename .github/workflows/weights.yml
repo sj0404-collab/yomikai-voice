@@ -24,15 +24,16 @@ jobs:
           mkdir -p pack
           ./engine/qwen_tts -d engine/qwen3-tts-0.6b --export-q4lsq pack/talker_cp.q4.gguf 2>&1 | tail -15
           ls -la pack/
+      - name: Deps for strip (torch cpu)
+        run: |
+          pip3 install --quiet --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu
+          pip3 install --quiet --break-system-packages safetensors numpy
+      - name: Strip layer-blocks прямо в pack (bf16 -> drop, gguf covers them)
+        run: python3 tools/tts/strip_layers.py engine/qwen3-tts-0.6b pack
       - name: Assemble phone bundle
         run: |
-          set -e
-          cd engine/qwen3-tts-0.6b
-          cp -r --parents speech_tokenizer ../../pack/
-          cp --parents config.json generation_config.json merges.txt preprocessor_config.json tokenizer_config.json vocab.json ../../pack/ 2>/dev/null || true
-          cd ../..
           cp -r engine/presets/emovoice pack/emovoice
-          du -sh pack/*
+          ls -la pack/ && du -sh pack pack/speech_tokenizer
       - name: Zip bundle
         run: cd pack && zip -1 -q -r ../voice_pack_q4_06b.zip . && cd .. && ls -la voice_pack_q4_06b.zip
       - name: Upload artifact (страховка)
@@ -48,10 +49,11 @@ jobs:
           name: Voice pack Q4 0.6B (RU-ready)
           body: |
             Пакет весов для Yomikai Voice (Android).
-            - talker_cp.q4.gguf — Talker+CodePredictor Q4_0-LSQ (~0.49 ГБ)
-            - speech_tokenizer/ — речевой декодер bf16 (~0.65 ГБ)
+            - talker_cp.q4.gguf — Talker+CodePredictor Q4_0-LSQ (нативные q4-буферы, ~250–300 МБ)
+            - model.safetensors — ОСТАТОК: embeddings/нормы/lm_head (без слоёв — патч 001)
+            - speech_tokenizer/ — речевой декодер (~0.65 ГБ)
             - tokenizer/config + emovoice-пресеты
-            Распаковать в filesDir/model.
+            Требуется движок с патчем GGUF-primary (этот репо). Распаковать в filesDir/model.
           files: voice_pack_q4_06b.zip
           fail_on_unmatched_files: true
         env:

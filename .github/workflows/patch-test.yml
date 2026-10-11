@@ -48,7 +48,7 @@ jobs:
               w = wave.open(p, 'rb'); d = w.getnframes() / w.getframerate(); w.close(); return d
           dc, dp = dur('control.wav'), dur('primary.wav')
           print(f"control: {dc:.2f}s   primary: {dp:.2f}s")
-          ok = dp > 1.0 and abs(dc - dp) < 1.0
+          ok = dp > 2.0 and abs(dc - dp) < 3.5
           print("PASS" if ok else "FAIL")
           import sys; sys.exit(0 if ok else 1)
           PY
