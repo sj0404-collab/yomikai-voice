@@ -1,0 +1,96 @@
+name: TTS-киоск (синтез по форме)
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: 'Текст для озвучки (RU/EN, можно с [joy]/[sad]/[pause:300ms])'
+        required: true
+        type: string
+      voice:
+        description: 'Пресет-голос (если custom_voice пуст)'
+        type: choice
+        default: serena
+        options: [serena, vivian, sohee, ono_anna, ryan, aiden, eric, dylan, uncle_fu]
+      custom_voice:
+        description: 'Свой голос: имя файла из папки voices/ без .bin (напр. moya_babushka). Пусто = пресет'
+        required: false
+        default: ''
+      language:
+        type: choice
+        default: Russian
+        options: [Russian, English, Chinese, Japanese, Korean, German, French, Spanish, Italian, Portuguese]
+      emotion:
+        description: 'Эмоция-обёртка (inline разметку можно писать и прямо в тексте)'
+        type: choice
+        default: none
+        options: [none, joy, sad, anger, fear, surprise, disgust]
+      rate:
+        description: 'Темп, pitch-preserving (1.0 = как есть, 1.1 = быстрее, 0.9 = медленнее)'
+        default: '1.0'
+      volume:
+        description: 'Громкость (1.0 = как есть, 1.1 = громче)'
+        default: '1.0'
+      quant:
+        type: choice
+        default: int8
+        options: [int8, int4, bf16]
+
+jobs:
+  tts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libopenblas-dev
+      - name: Fetch + build engine
+        run: |
+          bash scripts/fetch_engine.sh
+          make -C engine blas 2>&1 | tail -3
+      - name: Model cache (CustomVoice 0.6B)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: qtts-model
+          key: ttsmodel-cv-06b-v1
+      - name: Download model (cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cp engine/download_model.sh . && bash download_model.sh --model small --dir qtts-model
+      - name: Validate custom voice
+        run: |
+          if [ -n "${{ inputs.custom_voice }}" ]; then
+            f="voices/${{ inputs.custom_voice }}.bin"
+            [ -f "$f" ] || { echo "ОШИБКА: $f не найден в репо. Сначала запусти Voice-фабрику."; exit 1; }
+            ls -la "$f"
+          fi
+      - name: Write text
+        env:
+          TEXT: ${{ inputs.text }}
+        run: printf '%s' "$TEXT" > input_text.txt && wc -c input_text.txt
+      - name: Synthesize
+        run: |
+          CV="${{ inputs.custom_voice }}"
+          python3 tools/tts/synth.py \
+            --text-file input_text.txt --engine engine/qwen_tts --model qtts-model \
+            --voice "${{ inputs.voice }}" ${CV:+--custom-voice "voices/$CV.bin"} \
+            --lang "${{ inputs.language }}" --emotion "${{ inputs.emotion }}" \
+            --rate "${{ inputs.rate }}" --volume "${{ inputs.volume }}" \
+            --quant "${{ inputs.quant }}" \
+            --out "tts_${{ github.run_number }}.${{ inputs.voice }}.wav"
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tts-wav
+          path: tts_*.wav
+          retention-days: 30
+      - name: Release (прямая ссылка)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tts-results
+          name: TTS результаты
+          body: 'Все генерации киоска. Имя файла = запуск.голос.'
+          files: tts_*.wav
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

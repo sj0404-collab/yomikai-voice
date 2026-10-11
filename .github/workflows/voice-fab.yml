@@ -1,0 +1,88 @@
+name: Voice-фабрика (заготовить свой голос)
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Имя голоса (латиницей, без пробелов): станет voices/<имя>.bin'
+        required: true
+      ref_audio_url:
+        description: 'Прямая ссылка на референс-аудио голоса (3–30 с чистой речи, без музыки)'
+        required: true
+      ref_text:
+        description: 'Точная расшифровка референса (не обязательно, но лучше с ней)'
+        required: false
+        default: ''
+      language:
+        type: choice
+        default: Russian
+        options: [Russian, English, Chinese, Japanese, Korean, German, French, Spanish, Italian, Portuguese]
+
+jobs:
+  fab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Name check
+        run: |
+          echo "${{ inputs.name }}" | grep -qE '^[a-z0-9_]{2,40}$' || { echo "имя: только a-z 0-9 _"; exit 1; }
+          [ ! -f "voices/${{ inputs.name }}.bin" ] || { echo "такой голос уже есть — выбери другое имя"; exit 1; }
+      - name: Deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libopenblas-dev ffmpeg
+      - name: Fetch + build engine
+        run: |
+          bash scripts/fetch_engine.sh
+          make -C engine blas 2>&1 | tail -3
+      - name: Base model cache (для извлечения голоса)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: qtts-base
+          key: ttsmodel-base-06b-v1
+      - name: Download base model (cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cp engine/download_model.sh . && bash download_model.sh --model base-small --dir qtts-base
+      - name: Download + normalise reference audio
+        run: |
+          set -e
+          curl -fL --retry 2 -o ref_src "${{ inputs.ref_audio_url }}"
+          ffmpeg -hide_banner -loglevel error -y -i ref_src -ac 1 -ar 24000 ref.wav
+          dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 ref.wav)
+          echo "duration: $dur"
+          python3 -c "import sys; d=float('$dur'); sys.exit(0 if 2.0 <= d <= 120 else 'референс должен быть 2–120 с')"
+      - name: Extract voice (x-vector -> voices/<name>.bin)
+        run: |
+          mkdir -p voices
+          RT="${{ inputs.ref_text }}"
+          set -x
+          ./engine/qwen_tts -d qtts-base --ref-audio ref.wav \
+            ${RT:+--ref-text "$RT"} -l "${{ inputs.language }}" \
+            --xvector-only --save-voice "voices/${{ inputs.name }}.bin" \
+            --text "probe" -o /tmp/probe.wav
+          ls -la "voices/${{ inputs.name }}.bin"
+      - name: Preview with the new voice (CustomVoice model)
+        run: |
+          cp engine/download_model.sh . && bash download_model.sh --model small --dir qtts-model
+          printf '%s' 'Привет! Это мой новый заготовленный голос. [joy] И он говорит с эмоциями!' > probe_ru.txt
+          python3 tools/tts/synth.py --text-file probe_ru.txt --engine engine/qwen_tts --model qtts-model \
+            --custom-voice "voices/${{ inputs.name }}.bin" --lang Russian \
+            --out "preview_${{ inputs.name }}_ru.wav"
+      - name: Commit voice into repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "voices/${{ inputs.name }}.bin"
+          git commit -m "voice-fab: add ${{ inputs.name }} (xvector)"
+          git push
+      - name: Release (голос + прослушка)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tts-voices
+          name: TTS заготовленные голоса
+          body: 'Файлы voices/*.bin (x-vector, ~8 КБ) + прослушки превью. Использовать: киоск → поле custom_voice.'
+          files: |
+            voices/${{ inputs.name }}.bin
+            preview_${{ inputs.name }}_*.wav
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
