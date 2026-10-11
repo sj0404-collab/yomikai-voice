@@ -5,7 +5,7 @@
 Заполненная копия живёт рядом: rest/model.safetensors + конфиги + speech_tokenizer/."""
 import os, re, shutil, sys
 from safetensors import safe_open
-from safetensors.numpy import save_file
+from safetensors.torch import save_file
 
 DROP = re.compile(r'^talker\.(model|code_predictor\.model)\.layers\.\d+\.'
                   r'(self_attn\.(q|k|v|o)_proj|mlp\.(gate|up|down)_proj)\.weight$')
@@ -13,19 +13,17 @@ DROP = re.compile(r'^talker\.(model|code_predictor\.model)\.layers\.\d+\.'
 def main(src_dir, dst_dir):
     src = os.path.join(src_dir, 'model.safetensors')
     kept, dropped, kept_bytes, drop_bytes = {}, [], 0, 0
-    import numpy as np
-    with safe_open(src, framework='numpy') as f:
+    with safe_open(src, framework='pt') as f:
         for name in f.keys():
             t = f.get_tensor(name)
             if DROP.match(name):
-                drop_bytes += t.nbytes
+                drop_bytes += t.numel() * t.element_size()
                 if len(dropped) < 6: dropped.append(name)
             else:
                 kept[name] = t
-                kept_bytes += t.nbytes
+                kept_bytes += t.numel() * t.element_size()
     os.makedirs(dst_dir, exist_ok=True)
-    save_file(kept, os.path.join(dst_dir, 'model.safetensors'),
-              metadata={'format': 'np'})
+    save_file(kept, os.path.join(dst_dir, 'model.safetensors'))
     for fn in os.listdir(src_dir):
         if fn == 'model.safetensors' or os.path.isdir(os.path.join(src_dir, fn)):
             continue
